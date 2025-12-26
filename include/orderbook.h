@@ -7,32 +7,42 @@
 #include "queue.h"
 #include "heap.h"
 #include "order_location.h"
+#include "trade_event.h"   /* ✅ REQUIRED */
 
 typedef struct orderbook {
     hashmap* bids;
     hashmap* asks;
     heap*    bid_prices;
     heap*    ask_prices;
+    hashmap* order_index;
 
-    hashmap* order_index;  
+    /* trade event hook */
+    trade_callback on_trade;
+    void*          trade_ctx;
 } orderbook;
 
-int orderbook_modify(
-    orderbook* ob,
-    uint64_t order_id,
-    uint32_t new_price,
-    uint32_t new_qty
-);
-
+/* lifecycle */
 orderbook* orderbook_create(size_t capacity);
 void       orderbook_destroy(orderbook* ob);
 
+/* order entry */
 void orderbook_add_limit(orderbook* ob, order* ord);
 void orderbook_add_market(orderbook* ob, order* ord);
 
+/* cancel / modify */
+int orderbook_cancel(orderbook* ob, uint64_t order_id);
+int orderbook_modify(orderbook* ob, uint64_t order_id,
+                     uint32_t new_price, uint32_t new_qty);
+
+/* best prices */
 uint32_t orderbook_best_bid(orderbook* ob);
 uint32_t orderbook_best_ask(orderbook* ob);
 
-int orderbook_cancel(orderbook* ob, uint64_t order_id);
+/* trade callback registration */
+void orderbook_set_trade_callback(
+    orderbook* ob,
+    trade_callback cb,
+    void* ctx
+);
 
-#endif /* ORDERBOOK_H */
+#endif

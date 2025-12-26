@@ -1,58 +1,29 @@
-# ===============================
-# Compiler & tools
-# ===============================
-CC      := gcc
-RM      := rm -rf
-MKDIR   := mkdir -p
+CC := gcc
+CFLAGS := -std=c11 -Wall -Wextra -Wpedantic -O2 -Iinclude
 
-# ===============================
-# Directories
-# ===============================
-SRC_DIR   := src
-INC_DIR   := include
-BUILD_DIR := build
-
-# ===============================
-# Flags
-# ===============================
-CFLAGS := -std=c11 -Wall -Wextra -Wpedantic -O2 -I$(INC_DIR)
-
-# ===============================
-# Sources
-# ===============================
-SRCS := \
+SRC := \
     src/hashmap.c \
     src/queue.c \
     src/heap.c \
     src/orderbook.c \
     src/depth.c \
     src/print.c \
+    src/trade_log.c \
+    src/candle_builder.c \
     src/main.c
 
-OBJS := $(SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
+OBJ := $(SRC:src/%.c=build/%.o)
 
-# ===============================
-# Output
-# ===============================
-TARGET := main.exe
+BIN := main.exe
 
-# ===============================
-# Rules
-# ===============================
-all: $(TARGET)
+all: $(BIN)
 
-$(TARGET): $(OBJS)
+$(BIN): $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $^
 
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
+build/%.o: src/%.c
+	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR):
-	$(MKDIR) $(BUILD_DIR)
-
 clean:
-	$(RM) $(BUILD_DIR) $(TARGET)
-
-rebuild: clean all
-
-.PHONY: all clean rebuild
+	rm -rf build $(BIN) output/*.csv output/*.png

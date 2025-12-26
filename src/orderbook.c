@@ -61,6 +61,14 @@ static int can_fully_fill(orderbook* ob, order* ord) {
     return remaining == 0;
 }
 
+void orderbook_set_trade_callback(
+    orderbook* ob,
+    trade_callback cb,
+    void* ctx
+) {
+    ob->on_trade = cb;
+    ob->trade_ctx = ctx;
+}
 
 
 /* ---------- matching ---------- */
@@ -78,7 +86,9 @@ static void match_buy(orderbook* ob, order* buy) {
 
         buy->qty  -= traded;
         sell->qty -= traded;
-
+        if (ob->on_trade) {
+            ob->on_trade(best_ask, traded, 'B', ob->trade_ctx);
+        }
         printf("TRADE: %u @ %u\n", traded, best_ask);
 
         if (sell->qty == 0) {
@@ -106,7 +116,9 @@ static void match_sell(orderbook* ob, order* sell) {
 
         sell->qty -= traded;
         buy->qty  -= traded;
-
+        if (ob->on_trade) {
+            ob->on_trade(best_bid, traded, 'S', ob->trade_ctx);
+        }
         printf("TRADE: %u @ %u\n", traded, best_bid);
 
         if (buy->qty == 0) {
