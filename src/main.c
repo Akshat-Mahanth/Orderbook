@@ -34,8 +34,7 @@ static order* make_order(
 /* ---------- simulation parameters ---------- */
 
 #define NUM_AGENTS  20
-#define SIM_STEPS  50
-
+#define SIM_STEPS 2000 
 /* ---------- main ---------- */
 
 int main(void) {
