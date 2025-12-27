@@ -30,8 +30,8 @@ void orderbook_add_limit(orderbook* ob, order* ord);
 void orderbook_add_market(orderbook* ob, order* ord);
 
 /* cancel / modify */
-int orderbook_cancel(orderbook* ob, uint64_t order_id);
-int orderbook_modify(orderbook* ob, uint64_t order_id,
+int orderbook_cancel(orderbook* ob, uint32_t order_id);
+int orderbook_modify(orderbook* ob, uint32_t order_id,
                      uint32_t new_price, uint32_t new_qty);
 
 /* best prices */

@@ -1,8 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <inttypes.h>   /* REQUIRED for PRIu64 */
 
-#define TRADES_PER_CANDLE 10
+#define TRADES_PER_CANDLE 2 
 
 void build_candles(
     const char* trades_csv,
@@ -36,7 +37,7 @@ void build_candles(
     uint64_t candle_idx = 0;
     int count = 0;
 
-    while (fscanf(in, "%llu,%u,%u,%c\n",
+    while (fscanf(in, "%" PRIu64 ",%u,%u,%c\n",
                   &seq, &price, &qty, &side) == 4) {
 
         if (count == 0) {
@@ -52,11 +53,17 @@ void build_candles(
         count++;
 
         if (count == TRADES_PER_CANDLE) {
-            fprintf(out, "%llu,%u,%u,%u,%u,%u\n",
+            fprintf(out, "%" PRIu64 ",%u,%u,%u,%u,%u\n",
                     candle_idx++,
                     open, high, low, close, volume);
             count = 0;
         }
+    }
+    /* emit last partial candle */
+    if (count > 0) {
+        fprintf(out, "%" PRIu64 ",%u,%u,%u,%u,%u\n",
+                candle_idx,
+                open, high, low, close, volume);
     }
 
     fclose(in);

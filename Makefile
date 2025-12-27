@@ -10,7 +10,9 @@ SRC := \
     src/print.c \
     src/trade_log.c \
     src/candle_builder.c \
+    src/agent_random.c \
     src/main.c
+
 
 OBJ := $(SRC:src/%.c=build/%.o)
 

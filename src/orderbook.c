@@ -75,27 +75,50 @@ void orderbook_set_trade_callback(
 
 static void match_buy(orderbook* ob, order* buy) {
     while (buy->qty > 0 && !heap_is_empty(ob->ask_prices)) {
+
         uint32_t best_ask = heap_top(ob->ask_prices);
         if (best_ask > buy->price)
             break;
 
         queue* q = hashmap_get(ob->asks, best_ask);
+        if (!q || queue_is_empty(q)) {
+            /* stale price level */
+            heap_pop(ob->ask_prices);
+            remove_level(ob->asks, best_ask);
+            continue;
+        }
+
         order* sell = queue_peek(q);
+        if (!sell)
+            break;
 
         uint32_t traded = (buy->qty < sell->qty) ? buy->qty : sell->qty;
 
         buy->qty  -= traded;
         sell->qty -= traded;
-        if (ob->on_trade) {
+
+        if (ob->on_trade)
             ob->on_trade(best_ask, traded, 'B', ob->trade_ctx);
-        }
+
         printf("TRADE: %u @ %u\n", traded, best_ask);
 
+        /* fully filled resting order */
         if (sell->qty == 0) {
+
+            /* remove from order index */
+            order_location* loc =
+                hashmap_get(ob->order_index, sell->id);
+            if (loc) {
+                hashmap_remove(ob->order_index, sell->id);
+                free(loc);
+            }
+
+            /* REMOVE HEAD ONLY */
             queue_pop(q);
             free(sell);
         }
 
+        /* clean empty level */
         if (queue_is_empty(q)) {
             heap_pop(ob->ask_prices);
             remove_level(ob->asks, best_ask);
@@ -105,33 +128,57 @@ static void match_buy(orderbook* ob, order* buy) {
 
 static void match_sell(orderbook* ob, order* sell) {
     while (sell->qty > 0 && !heap_is_empty(ob->bid_prices)) {
+
         uint32_t best_bid = heap_top(ob->bid_prices);
         if (best_bid < sell->price)
             break;
 
         queue* q = hashmap_get(ob->bids, best_bid);
+        if (!q || queue_is_empty(q)) {
+            /* stale price level */
+            heap_pop(ob->bid_prices);
+            remove_level(ob->bids, best_bid);
+            continue;
+        }
+
         order* buy = queue_peek(q);
+        if (!buy)
+            break;
 
         uint32_t traded = (sell->qty < buy->qty) ? sell->qty : buy->qty;
 
         sell->qty -= traded;
         buy->qty  -= traded;
-        if (ob->on_trade) {
+
+        if (ob->on_trade)
             ob->on_trade(best_bid, traded, 'S', ob->trade_ctx);
-        }
+
         printf("TRADE: %u @ %u\n", traded, best_bid);
 
+        /* fully filled resting order */
         if (buy->qty == 0) {
+
+            /* remove from order index */
+            order_location* loc =
+                hashmap_get(ob->order_index, buy->id);
+            if (loc) {
+                hashmap_remove(ob->order_index, buy->id);
+                free(loc);
+            }
+
+            /* REMOVE HEAD ONLY */
             queue_pop(q);
             free(buy);
         }
 
+        /* clean empty level */
         if (queue_is_empty(q)) {
             heap_pop(ob->bid_prices);
             remove_level(ob->bids, best_bid);
         }
     }
 }
+
 
 /* ---------- public API ---------- */
 
@@ -209,41 +256,33 @@ uint32_t orderbook_best_ask(orderbook* ob) {
     return heap_is_empty(ob->ask_prices) ? 0 : heap_top(ob->ask_prices);
 }
 
-int orderbook_cancel(orderbook* ob, uint64_t order_id) {
+int orderbook_cancel(orderbook* ob, uint32_t order_id) {
     order_location* loc = hashmap_get(ob->order_index, order_id);
     if (!loc)
-        return 0;
+        return 0;   /* already gone */
 
     hashmap* book = (loc->side == BUY) ? ob->bids : ob->asks;
-    heap*    prices = (loc->side == BUY) ? ob->bid_prices : ob->ask_prices;
-
     queue* q = hashmap_get(book, loc->price);
-    if (!q)
-        return 0; // should never happen
-
-    /* remove order from price level */
-    order* ord = loc->node->ord;
-    queue_remove_node(q, loc->node);
-
-    /* cleanup price level if empty */
-    if (queue_is_empty(q)) {
-        heap_pop(prices);
-        hashmap_remove(book, loc->price);
-        queue_destroy(q);
+    if (!q) {
+        hashmap_remove(ob->order_index, order_id);
+        free(loc);
+        return 0;
     }
 
-    /* remove from index */
+    if (loc->node)
+        queue_remove_node(q, loc->node);
+
     hashmap_remove(ob->order_index, order_id);
-
-    free(ord);
     free(loc);
-
     return 1;
 }
 
+
+
+
 int orderbook_modify(
     orderbook* ob,
-    uint64_t order_id,
+    uint32_t order_id,
     uint32_t new_price,
     uint32_t new_qty
 ) {
