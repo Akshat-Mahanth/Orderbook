@@ -4,7 +4,8 @@
 
 /* ---------- helpers ---------- */
 
-static queue* get_or_create_level(hashmap* map, heap* h, uint32_t price) {
+static queue* get_or_create_level(hashmap* map, heap* h, uint32_t price)
+{
     queue* q = hashmap_get(map, price);
     if (!q) {
         q = queue_create();
@@ -14,7 +15,8 @@ static queue* get_or_create_level(hashmap* map, heap* h, uint32_t price) {
     return q;
 }
 
-static void remove_level(hashmap* map, uint32_t price) {
+static void remove_level(hashmap* map, uint32_t price)
+{
     queue* q = hashmap_get(map, price);
     if (q) {
         queue_destroy(q);
@@ -22,7 +24,8 @@ static void remove_level(hashmap* map, uint32_t price) {
     }
 }
 
-static int can_fully_fill(orderbook* ob, order* ord) {
+static int can_fully_fill(orderbook* ob, order* ord)
+{
     uint32_t remaining = ord->qty;
 
     if (ord->side == BUY) {
@@ -61,19 +64,18 @@ static int can_fully_fill(orderbook* ob, order* ord) {
     return remaining == 0;
 }
 
-void orderbook_set_trade_callback(
-    orderbook* ob,
-    trade_callback cb,
-    void* ctx
-) {
+void orderbook_set_trade_callback(orderbook* ob,
+                                  trade_callback cb,
+                                  void* ctx)
+{
     ob->on_trade = cb;
     ob->trade_ctx = ctx;
 }
 
-
 /* ---------- matching ---------- */
 
-static void match_buy(orderbook* ob, order* buy) {
+static void match_buy(orderbook* ob, order* buy)
+{
     while (buy->qty > 0 && !heap_is_empty(ob->ask_prices)) {
 
         uint32_t best_ask = heap_top(ob->ask_prices);
@@ -82,7 +84,6 @@ static void match_buy(orderbook* ob, order* buy) {
 
         queue* q = hashmap_get(ob->asks, best_ask);
         if (!q || queue_is_empty(q)) {
-            /* stale price level */
             heap_pop(ob->ask_prices);
             remove_level(ob->asks, best_ask);
             continue;
@@ -102,10 +103,7 @@ static void match_buy(orderbook* ob, order* buy) {
 
         printf("TRADE: %u @ %u\n", traded, best_ask);
 
-        /* fully filled resting order */
         if (sell->qty == 0) {
-
-            /* remove from order index */
             order_location* loc =
                 hashmap_get(ob->order_index, sell->id);
             if (loc) {
@@ -113,12 +111,10 @@ static void match_buy(orderbook* ob, order* buy) {
                 free(loc);
             }
 
-            /* REMOVE HEAD ONLY */
             queue_pop(q);
             free(sell);
         }
 
-        /* clean empty level */
         if (queue_is_empty(q)) {
             heap_pop(ob->ask_prices);
             remove_level(ob->asks, best_ask);
@@ -126,7 +122,8 @@ static void match_buy(orderbook* ob, order* buy) {
     }
 }
 
-static void match_sell(orderbook* ob, order* sell) {
+static void match_sell(orderbook* ob, order* sell)
+{
     while (sell->qty > 0 && !heap_is_empty(ob->bid_prices)) {
 
         uint32_t best_bid = heap_top(ob->bid_prices);
@@ -135,7 +132,6 @@ static void match_sell(orderbook* ob, order* sell) {
 
         queue* q = hashmap_get(ob->bids, best_bid);
         if (!q || queue_is_empty(q)) {
-            /* stale price level */
             heap_pop(ob->bid_prices);
             remove_level(ob->bids, best_bid);
             continue;
@@ -155,10 +151,7 @@ static void match_sell(orderbook* ob, order* sell) {
 
         printf("TRADE: %u @ %u\n", traded, best_bid);
 
-        /* fully filled resting order */
         if (buy->qty == 0) {
-
-            /* remove from order index */
             order_location* loc =
                 hashmap_get(ob->order_index, buy->id);
             if (loc) {
@@ -166,12 +159,10 @@ static void match_sell(orderbook* ob, order* sell) {
                 free(loc);
             }
 
-            /* REMOVE HEAD ONLY */
             queue_pop(q);
             free(buy);
         }
 
-        /* clean empty level */
         if (queue_is_empty(q)) {
             heap_pop(ob->bid_prices);
             remove_level(ob->bids, best_bid);
@@ -179,10 +170,10 @@ static void match_sell(orderbook* ob, order* sell) {
     }
 }
 
-
 /* ---------- public API ---------- */
 
-orderbook* orderbook_create(size_t capacity) {
+orderbook* orderbook_create(size_t capacity)
+{
     orderbook* ob = malloc(sizeof(orderbook));
     if (!ob) return NULL;
 
@@ -191,11 +182,14 @@ orderbook* orderbook_create(size_t capacity) {
     ob->bid_prices = heap_create(capacity, MAX_HEAP);
     ob->ask_prices = heap_create(capacity, MIN_HEAP);
     ob->order_index = hashmap_create(capacity);
+    ob->on_trade = NULL;
+    ob->trade_ctx = NULL;
+
     return ob;
 }
-void orderbook_add_limit(orderbook* ob, order* ord) {
 
-    /* FOK pre-check */
+void orderbook_add_limit(orderbook* ob, order* ord)
+{
     if (ord->type == FOK) {
         if (!can_fully_fill(ob, ord)) {
             free(ord);
@@ -203,19 +197,16 @@ void orderbook_add_limit(orderbook* ob, order* ord) {
         }
     }
 
-    if (ord->side == BUY) {
+    if (ord->side == BUY)
         match_buy(ob, ord);
-    } else {
+    else
         match_sell(ob, ord);
-    }
 
-    /* IOC & FOK never rest */
     if (ord->type == IOC || ord->type == FOK) {
         free(ord);
         return;
     }
 
-    /* LIMIT: rest remaining */
     if (ord->qty > 0) {
         queue* q = get_or_create_level(
             (ord->side == BUY) ? ob->bids : ob->asks,
@@ -236,8 +227,8 @@ void orderbook_add_limit(orderbook* ob, order* ord) {
     }
 }
 
-
-void orderbook_add_market(orderbook* ob, order* ord) {
+void orderbook_add_market(orderbook* ob, order* ord)
+{
     if (ord->side == BUY) {
         ord->price = UINT32_MAX;
         match_buy(ob, ord);
@@ -248,18 +239,21 @@ void orderbook_add_market(orderbook* ob, order* ord) {
     free(ord);
 }
 
-uint32_t orderbook_best_bid(orderbook* ob) {
+uint32_t orderbook_best_bid(orderbook* ob)
+{
     return heap_is_empty(ob->bid_prices) ? 0 : heap_top(ob->bid_prices);
 }
 
-uint32_t orderbook_best_ask(orderbook* ob) {
+uint32_t orderbook_best_ask(orderbook* ob)
+{
     return heap_is_empty(ob->ask_prices) ? 0 : heap_top(ob->ask_prices);
 }
 
-int orderbook_cancel(orderbook* ob, uint32_t order_id) {
+int orderbook_cancel(orderbook* ob, uint32_t order_id)
+{
     order_location* loc = hashmap_get(ob->order_index, order_id);
     if (!loc)
-        return 0;   /* already gone */
+        return 0;
 
     hashmap* book = (loc->side == BUY) ? ob->bids : ob->asks;
     queue* q = hashmap_get(book, loc->price);
@@ -277,20 +271,15 @@ int orderbook_cancel(orderbook* ob, uint32_t order_id) {
     return 1;
 }
 
-
-
-
-int orderbook_modify(
-    orderbook* ob,
-    uint32_t order_id,
-    uint32_t new_price,
-    uint32_t new_qty
-) {
+int orderbook_modify(orderbook* ob,
+                     uint32_t order_id,
+                     uint32_t new_price,
+                     uint32_t new_qty)
+{
     order_location* loc = hashmap_get(ob->order_index, order_id);
     if (!loc)
         return 0;
 
-    /* copy old order */
     order* old = loc->node->ord;
 
     order* new_ord = malloc(sizeof(order));
@@ -301,18 +290,14 @@ int orderbook_modify(
     new_ord->price = new_price;
     new_ord->qty   = new_qty;
 
-    /* cancel old */
     orderbook_cancel(ob, order_id);
-
-    /* reinsert as limit order */
     orderbook_add_limit(ob, new_ord);
 
     return 1;
 }
 
-
-
-void orderbook_destroy(orderbook* ob) {
+void orderbook_destroy(orderbook* ob)
+{
     if (!ob) return;
 
     hashmap_destroy(ob->bids);
@@ -322,3 +307,4 @@ void orderbook_destroy(orderbook* ob) {
     hashmap_destroy(ob->order_index);
     free(ob);
 }
+

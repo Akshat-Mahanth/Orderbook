@@ -1,137 +1,159 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <time.h>
-#include <stdint.h>
 
 #include "orderbook.h"
-#include "print.h"
-#include "trade_log.h"
+#include "order.h"
+#include "snapshot.h"
+#include "shm.h"
 #include "agent.h"
 
-/* from candle_builder.c */
-void build_candles(const char* trades_csv, const char* candles_csv);
+/* ==================================================
+   runtime control
+   ================================================== */
+static volatile int running = 1;
 
-/* ---------- helpers ---------- */
-
-static uint32_t next_id = 1;
-
-static order* make_order(
-    uint32_t price,
-    uint32_t qty,
-    order_side side,
-    order_type type
-) {
-    order* o = calloc(1, sizeof(order));
-
-    o->id    = next_id++;
-    o->price = price;
-    o->qty   = qty;
-    o->side  = side;
-    o->type  = type;
-    return o;
+static void handle_sigint(int sig)
+{
+    (void)sig;
+    running = 0;
 }
 
-/* ---------- simulation parameters ---------- */
+/* ==================================================
+   seed initial liquidity
+   ================================================== */
+static void seed_book(orderbook *ob)
+{
+    for (uint32_t i = 0; i < 5; i++) {
 
-#define NUM_AGENTS  20
-#define SIM_STEPS 2000 
-/* ---------- main ---------- */
+        order *bid = calloc(1, sizeof(order));
+        bid->id    = 1000 + i;
+        bid->side  = BUY;
+        bid->price = 100 - i;
+        bid->qty   = 20;
+        bid->type  = LIMIT;
 
-int main(void) {
-    /* make stdout unbuffered (important on Windows/MSYS) */
-    setvbuf(stdout, NULL, _IONBF, 0);
+        order *ask = calloc(1, sizeof(order));
+        ask->id    = 2000 + i;
+        ask->side  = SELL;
+        ask->price = 101 + i;
+        ask->qty   = 20;
+        ask->type  = LIMIT;
 
-    printf("Orderbook simulation started\n");
-    srand(1);
+        orderbook_add_limit(ob, bid);
+        orderbook_add_limit(ob, ask);
+        }
+}
+static void ensure_book_health(orderbook *ob)
+{
+    if (orderbook_best_ask(ob) == 0) {
+        order *ask = calloc(1, sizeof(order));
+        ask->id    = rand();
+        ask->side  = SELL;
+        ask->price = orderbook_best_bid(ob) + 1;
+        ask->qty   = 20;
+        ask->type  = LIMIT;
+        orderbook_add_limit(ob, ask);
+    }
 
-    //srand((unsigned)time(NULL));
+    if (orderbook_best_bid(ob) == 0) {
+        order *bid = calloc(1, sizeof(order));
+        bid->id    = rand();
+        bid->side  = BUY;
+        bid->price = orderbook_best_ask(ob) - 1;
+        bid->qty   = 20;
+        bid->type  = LIMIT;
+        orderbook_add_limit(ob, bid);
+    }
+}
 
-    /* create orderbook */
-    orderbook* ob = orderbook_create(1024);
+/* =================================================
+   main
+   ================================================== */
+int main(void)
+{
+    signal(SIGINT, handle_sigint);
+    srand((unsigned)time(NULL));
 
-    /* attach trade logger */
-    FILE* trade_fp = trade_log_open("output/trades.csv");
-    if (!trade_fp) {
-        fprintf(stderr, "Failed to open trade log\n");
+    /* ---- create orderbook ---- */
+    orderbook *ob = orderbook_create(1024);
+    if (!ob) {
+        fprintf(stderr, "failed to create orderbook\n");
         return 1;
     }
-    orderbook_set_trade_callback(ob, trade_log_cb, trade_fp);
 
-    /* seed the book with an initial price */
-    orderbook_add_limit(ob, make_order(100, 50, BUY,  LIMIT));
-    orderbook_add_limit(ob, make_order(101, 50, SELL, LIMIT));
+    seed_book(ob);
 
-    /* create random agents */
-    agent* agents[NUM_AGENTS];
+    /* ---- create agents ---- */
+    const int NUM_AGENTS = 3;
+    agent *agents[NUM_AGENTS];
+
     for (int i = 0; i < NUM_AGENTS; i++) {
-        agents[i] = agent_random_create(i + 1);
-    }
-
-    /* ---------- main loop ---------- */
-
-    char choice;
-    while (1) {
-        printf("\nMenu:\n");
-        printf("1 - View L1 (Top of Book)\n");
-        printf("2 - View L2 (Market Depth)\n");
-        printf("3 - Run simulation step batch\n");
-        printf("4 - Add MARKET BUY (manual shock)\n");
-        printf("5 - Add MARKET SELL (manual shock)\n");
-        printf("6 - Build candles & exit\n");
-        printf("q - Quit (no candles)\n");
-        printf("> ");
-
-        scanf(" %c", &choice);
-
-        if (choice == '1') {
-            print_orderbook(ob, VIEW_L1);
-        }
-        else if (choice == '2') {
-            print_orderbook(ob, VIEW_L2);
-        }
-        else if (choice == '3') {
-            printf("Running %d simulation steps...\n", SIM_STEPS);
-            for (int t = 0; t < SIM_STEPS; t++) {
-                for (int i = 0; i < NUM_AGENTS; i++) {
-                    agents[i]->act(agents[i], ob);
-                }
-            }
-            printf("Simulation batch complete\n");
-        }
-        else if (choice == '4') {
-            orderbook_add_market(ob,
-                make_order(0, 20, BUY, MARKET));
-            printf("Manual MARKET BUY injected\n");
-        }
-        else if (choice == '5') {
-            orderbook_add_market(ob,
-                make_order(0, 20, SELL, MARKET));
-            printf("Manual MARKET SELL injected\n");
-        }
-        else if (choice == '6') {
-            break;
-        }
-        else if (choice == 'q') {
-            printf("Exiting without candle build\n");
-            goto cleanup;
+        agents[i] = agent_random_create(i);
+        if (!agents[i]) {
+            fprintf(stderr, "failed to create agent %d\n", i);
+            return 1;
         }
     }
 
-    /* ---------- cleanup & post-processing ---------- */
+    /* ---- shared memory ---- */
+    ShmBuffer *shm_buf = NULL;
+    if (shm_init(&shm_buf) != 0) {
+        fprintf(stderr, "failed to init shared memory\n");
+        return 1;
+    }
 
-    printf("Building candles...\n");
-    build_candles("output/trades.csv", "output/candles.csv");
-    printf("Candles written to output/candles.csv\n");
-    printf("You can now run: gnuplot plot/plot.gp\n");
+    MarketSnapshot snap;
+    orderbook_set_trade_callback(ob, snapshot_trade_cb, &snap);
+    printf("DEBUG: on_trade ptr = %p\n", (void*)ob->on_trade);
 
-cleanup:
+    struct timespec ts;
+    ts.tv_sec  = 0;
+    ts.tv_nsec = 100 * 1000 * 1000; /* 100 ms */
+
+    printf("simulation running (Ctrl+C to stop)\n");
+
+    
+    /* ==================================================
+       MAIN SIMULATION LOOP
+       ================================================== */
+    while (running) {
+        snap.trade_count = 0;   
+        ensure_book_health(ob);
+        /* ---- agents act FIRST ---- */
+        for (int i = 0; i < NUM_AGENTS; i++) {
+            agents[i]->act(agents[i], ob);
+        }
+
+        /* ---- snapshot AFTER state changes ---- */
+        build_snapshot(ob, &snap);
+        shm_publish(shm_buf, &snap);
+
+        /* ---- debug (optional) ---- */
+        printf("BID %u (%lu) | ASK %u (%lu)\n",
+               snap.best_bid,
+               snap.best_bid_qty,
+               snap.best_ask,
+               snap.best_ask_qty);
+
+        nanosleep(&ts, NULL);
+    }
+
+    /* ==================================================
+       cleanup
+       ================================================== */
+    shm_destroy();
+
     for (int i = 0; i < NUM_AGENTS; i++) {
         agent_destroy(agents[i]);
     }
 
-    trade_log_close(trade_fp);
     orderbook_destroy(ob);
 
-    printf("Simulation ended cleanly\n");
+    printf("simulation stopped\n");
     return 0;
 }
+
