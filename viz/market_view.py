@@ -1,80 +1,94 @@
-from PySide6 import QtWidgets, QtCore
-from viz.shm_reader import ShmReader
-import pyqtgraph as pg
-from viz.candles import CandleSeries
+from PySide6 import QtWidgets
+from viz.asset_panel import AssetPanel
+from viz.colors import ASSET_COLORS
+
 
 class MarketView(QtWidgets.QWidget):
-    def __init__(self):
+    def __init__(self, num_assets=3, view_count=2):
         super().__init__()
 
-        self.reader = ShmReader()
+        # ---------- state (MUST come first) ----------
+        self.num_assets = num_assets
+        self.view_count = view_count
+        self.asset_ids = list(range(num_assets))   # <-- THIS WAS MISSING AT RUNTIME
 
-        self.setWindowTitle("Orderbook Market View")
-        self.resize(600, 500)
+        # ---------- UI ----------
+        self.setWindowTitle("Multi-Asset Market View")
+        self.resize(1200, 800)
 
-        layout = QtWidgets.QVBoxLayout(self)
+        self.grid = QtWidgets.QGridLayout(self)
+        self.panels = []
 
-        # L1 display
-        self.l1_label = QtWidgets.QLabel("L1")
-        self.l1_label.setStyleSheet("font-size: 16px; font-weight: bold;")
-        layout.addWidget(self.l1_label)
+        # ---------- build ----------
+        self._build_grid()
 
-        # L2 table
-        self.table = QtWidgets.QTableWidget(20, 3)
-        self.table.setHorizontalHeaderLabels(["Side", "Price", "Qty"])
-        self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(self.table)
-        self.candles = CandleSeries(interval_sec=1)
-        # timer
-        self.timer = QtCore.QTimer()
-        self.timer.timeout.connect(self.update_view)
-        self.timer.start(50)  # ~20 FPS
-        self.price_plot = pg.PlotWidget(title="Price (last trades)")
-        self.price_plot.showGrid(x=True, y=True)
-        layout.addWidget(self.price_plot)
-        self.price_curve = self.price_plot.plot([], [], pen=pg.mkPen('y', width=2))        
+    # -------------------------------------------------
+    # grid construction
+    # -------------------------------------------------
+    def _build_grid(self):
+        # clear existing widgets
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.setParent(None)
 
-    def update_view(self):
-        snap = self.reader.read_snapshot()
+        self.panels.clear()
 
-## debug print        print(
-##            "PY SNAP:",
-##            snap.best_bid,
-##            snap.best_ask,
-##            snap.bid_levels,
-##            snap.ask_levels
-##        )
+        cols = int(self.view_count ** 0.5)
+        if cols * cols < self.view_count:
+            cols += 1
 
-        self.l1_label.setText(
-            f"BID {snap.best_bid} ({snap.best_bid_qty}) | "
-            f"ASK {snap.best_ask} ({snap.best_ask_qty})"
-        )
+        for i in range(self.view_count):
+            asset_id = self.asset_ids[i % len(self.asset_ids)]
+            color = ASSET_COLORS[asset_id % len(ASSET_COLORS)]
 
-        rows = snap.bid_levels + snap.ask_levels
-        self.table.setRowCount(rows)
-        self.table.clearContents()
-        for i in range(snap.trade_count):
-            self.candles.on_trade(snap.trades[i])
-        row = 0
-        for i in range(snap.bid_levels):
-            self.table.setItem(row, 0, QtWidgets.QTableWidgetItem("BID"))
-            self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(str(snap.bids[i].price)))
-            self.table.setItem(row, 2, QtWidgets.QTableWidgetItem(str(snap.bids[i].qty)))
-            row += 1
+            panel = AssetPanel(asset_id, color)
+            self.panels.append(panel)
 
-        for i in range(snap.ask_levels):
-            self.table.setItem(row, 0, QtWidgets.QTableWidgetItem("ASK"))
-            self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(str(snap.asks[i].price)))
-            self.table.setItem(row, 2, QtWidgets.QTableWidgetItem(str(snap.asks[i].qty)))
-            row += 1
+            row = i // cols
+            col = i % cols
+            self.grid.addWidget(panel, row, col)
 
-        xs = []
-        ys = []
-        for c in self.candles.candles[-100:]:
-            xs.append(len(xs))
-            ys.append(c.close)
-        self.price_curve.setData(xs, ys)
-        print("trade_count:", snap.trade_count,
-            "candles:", len(self.candles.candles))
+    # -------------------------------------------------
+    # external reconfiguration
+    # -------------------------------------------------
+    def reconfigure(self, asset_ids, view_count):
+        self.asset_ids = asset_ids
+        self.view_count = view_count
+        self._build_grid()
+
+    # -------------------------------------------------
+    # core update (expects per-asset snapshots)
+    # -------------------------------------------------
+    def update_market(self, snapshots_by_asset):
+        for panel in self.panels:
+            snap = snapshots_by_asset.get(panel.asset_id)
+            if not snap:
+                continue
+
+            panel.update_l2(snap["bids"], snap["asks"])
+            panel.add_trades(snap["trades"])
+
+    # -------------------------------------------------
+    # SHM routing shim (single-asset → multi-asset)
+    # -------------------------------------------------
+    def update_from_shm(self, snaps):
+        snapshots = {}
+    
+        for asset_id in range(len(snaps)):
+            s = snaps[asset_id]
+    
+            bids = [(lvl.price, lvl.qty) for lvl in s.bids[:s.bid_levels]]
+            asks = [(lvl.price, lvl.qty) for lvl in s.asks[:s.ask_levels]]
+            trades = [(t.timestamp, t.price, t.qty)
+                      for t in s.trades[:s.trade_count]]
+            
+            snapshots[asset_id] = {
+                "bids": bids,
+                "asks": asks,
+                "trades": trades,
+            }
+    
+        self.update_market(snapshots)
         

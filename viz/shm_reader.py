@@ -1,32 +1,71 @@
-import mmap
-import ctypes
-import os
-from viz.snapshot_struct import ShmBuffer
-
-SHM_PATH = "/dev/shm/market_snapshot"
-
-class ShmReader:
-    def __init__(self):
-        size = ctypes.sizeof(ShmBuffer)
-
-        # open POSIX shared memory
-        self.fd = os.open(SHM_PATH, os.O_RDWR)
-
-        # mmap must be writable for ctypes.from_buffer
-        self.map = mmap.mmap(
-            self.fd,
-            size,
-            mmap.MAP_SHARED,
-            mmap.PROT_READ | mmap.PROT_WRITE
-        )
-
-        self.buf = ShmBuffer.from_buffer(self.map)
-
-    def read_snapshot(self):
-        while True:
-            seq1 = self.buf.seq
-            snap = self.buf.snapshot
-            seq2 = self.buf.seq
-            if seq1 == seq2:
-                return snap
+import os
+import mmap
+import ctypes
+from viz.config import NUM_ASSETS
+
+SHM_PATH = "/dev/shm/market_snapshot"
+
+
+class TradeEvent(ctypes.Structure):
+    _fields_ = [
+        ("price", ctypes.c_uint32),
+        ("qty", ctypes.c_uint32),
+        ("timestamp", ctypes.c_uint64),
+    ]
+
+
+class PriceLevel(ctypes.Structure):
+    _fields_ = [
+        ("price", ctypes.c_uint32),
+        ("qty", ctypes.c_uint64),
+    ]
+
+
+L2_DEPTH = 10
+MAX_TRADES = 64
+
+
+class MarketSnapshot(ctypes.Structure):
+    _fields_ = [
+        ("timestamp", ctypes.c_uint64),
+        ("best_bid", ctypes.c_uint32),
+        ("best_ask", ctypes.c_uint32),
+        ("best_bid_qty", ctypes.c_uint64),
+        ("best_ask_qty", ctypes.c_uint64),
+
+        ("bids", PriceLevel * L2_DEPTH),
+        ("asks", PriceLevel * L2_DEPTH),
+
+        ("bid_levels", ctypes.c_uint32),
+        ("ask_levels", ctypes.c_uint32),
+
+        ("trades", TradeEvent * MAX_TRADES),
+        ("trade_count", ctypes.c_uint32),
+    ]
+
+
+class ShmBuffer(ctypes.Structure):
+    _fields_ = [
+        ("snaps", MarketSnapshot * NUM_ASSETS)
+    ]
+
+
+class ShmReader:
+    def __init__(self):
+        if not os.path.exists(SHM_PATH):
+            raise FileNotFoundError(SHM_PATH)
+
+        self.fd = open(SHM_PATH, "r+b")
+        self.map = mmap.mmap(
+            self.fd.fileno(),
+            ctypes.sizeof(ShmBuffer),
+            access=mmap.ACCESS_READ,
+        )
+
+        self.buf = ShmBuffer.from_buffer_copy(self.map)
+
+    def read_all(self):
+        self.map.seek(0)
+        self.buf = ShmBuffer.from_buffer_copy(self.map)
+        return self.buf.snaps
 

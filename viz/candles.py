@@ -1,35 +1,28 @@
-class Candle:
-    def __init__(self, ts, price, qty):
-        self.ts = ts            # bucket timestamp
-        self.open = price
-        self.high = price
-        self.low = price
-        self.close = price
-        self.volume = qty
-
-    def update(self, price, qty):
-        if price > self.high:
-            self.high = price
-        if price < self.low:
-            self.low = price
-        self.close = price
-        self.volume += qty
-
-
 class CandleSeries:
     def __init__(self, interval_sec=1):
         self.interval = interval_sec
-        self.candles = []
-        self.current = None 
+        self.current = None
+        self.candles = []  # list of (t, o, h, l, c)
 
-    def on_trade(self, trade):
-        """
-        trade: TradeEvent from snapshot
-        """
-        bucket = trade.timestamp // (self.interval * 1000)
-        if self.current is None or bucket != self.current.ts:
-            self.current = Candle(bucket, trade.price, trade.qty)
-            self.candles.append(self.current)
+    def _bucket(self, ts_ms):
+        return (ts_ms // 1000) // self.interval
+
+    def add_trade(self, ts_ms, price, qty):
+        bucket = self._bucket(ts_ms)
+
+        if self.current is None:
+            self.current = [bucket, price, price, price, price]
+            return
+
+        if bucket == self.current[0]:
+            self.current[2] = max(self.current[2], price)  # high
+            self.current[3] = min(self.current[3], price)  # low
+            self.current[4] = price                         # close
         else:
-            self.current.update(trade.price, trade.qty)
-
+            self.candles.append(tuple(self.current))
+            self.current = [bucket, price, price, price, price]
+    def get_ohlc(self):
+            data = list(self.candles)
+            if self.current:
+                data.append(tuple(self.current))
+            return data

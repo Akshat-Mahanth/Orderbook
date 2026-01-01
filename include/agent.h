@@ -3,20 +3,14 @@
 
 #include <stdint.h>
 #include "orderbook.h"
-
-/* generic agent */
-typedef struct agent {
-    int      id;
-    double   cash;
-    int      inventory;
-
-    /* behavior */
-    void (*act)(struct agent* self, orderbook* ob);
-
-    /* private state */
-    uint64_t last_order_id;
-} agent;
-
+#include "order_queue.h"
+
+typedef struct agent {
+    int id;
+    int inventory;
+    double cash;
+    void (*act)(struct agent*, order_queue*);
+} agent;
 /* random agent constructor */
 agent* agent_random_create(int id);
 

@@ -6,14 +6,14 @@
 #include <time.h>
 
 #include "orderbook.h"
-#include "order.h"
 #include "snapshot.h"
 #include "shm.h"
 #include "agent.h"
+#include "agent_thread.h"
+#include "order_queue.h"
+#include "dispatcher.h"
+#include "config.h"
 
-/* ==================================================
-   runtime control
-   ================================================== */
 static volatile int running = 1;
 
 static void handle_sigint(int sig)
@@ -22,138 +22,124 @@ static void handle_sigint(int sig)
     running = 0;
 }
 
-/* ==================================================
-   seed initial liquidity
-   ================================================== */
-static void seed_book(orderbook *ob)
+/* -------------------------------------------------- */
+/* seed liquidity per asset                           */
+/* -------------------------------------------------- */
+static void seed_book(orderbook *ob, int asset)
 {
+    uint32_t base = 100 + asset * 10;
+
     for (uint32_t i = 0; i < 5; i++) {
-
-        order *bid = calloc(1, sizeof(order));
-        bid->id    = 1000 + i;
-        bid->side  = BUY;
-        bid->price = 100 - i;
-        bid->qty   = 20;
-        bid->type  = LIMIT;
-
-        order *ask = calloc(1, sizeof(order));
-        ask->id    = 2000 + i;
-        ask->side  = SELL;
-        ask->price = 101 + i;
-        ask->qty   = 20;
-        ask->type  = LIMIT;
-
-        orderbook_add_limit(ob, bid);
-        orderbook_add_limit(ob, ask);
-        }
-}
-static void ensure_book_health(orderbook *ob)
-{
-    if (orderbook_best_ask(ob) == 0) {
-        order *ask = calloc(1, sizeof(order));
-        ask->id    = rand();
-        ask->side  = SELL;
-        ask->price = orderbook_best_bid(ob) + 1;
-        ask->qty   = 20;
-        ask->type  = LIMIT;
-        orderbook_add_limit(ob, ask);
-    }
-
-    if (orderbook_best_bid(ob) == 0) {
         order *bid = calloc(1, sizeof(order));
         bid->id    = rand();
         bid->side  = BUY;
-        bid->price = orderbook_best_ask(ob) - 1;
+        bid->price = base - i;
         bid->qty   = 20;
         bid->type  = LIMIT;
+
+        order *ask = calloc(1, sizeof(order));
+        ask->id    = rand();
+        ask->side  = SELL;
+        ask->price = base + 1 + i;
+        ask->qty   = 20;
+        ask->type  = LIMIT;
+
         orderbook_add_limit(ob, bid);
+        orderbook_add_limit(ob, ask);
     }
 }
 
-/* =================================================
-   main
-   ================================================== */
 int main(void)
 {
     signal(SIGINT, handle_sigint);
     srand((unsigned)time(NULL));
 
-    /* ---- create orderbook ---- */
-    orderbook *ob = orderbook_create(1024);
-    if (!ob) {
-        fprintf(stderr, "failed to create orderbook\n");
-        return 1;
+    /* --------------------------------------------------
+       orderbooks
+       -------------------------------------------------- */
+    orderbook *books[NUM_ASSETS];
+
+    for (int i = 0; i < NUM_ASSETS; i++) {
+        books[i] = orderbook_create(1024);
+        seed_book(books[i], i);
     }
 
-    seed_book(ob);
+    /* --------------------------------------------------
+       snapshot (asset 0)
+       -------------------------------------------------- */
+    ShmBuffer *shm_buf = NULL;
+    shm_init(&shm_buf);
+    
+    for (int a = 0; a < NUM_ASSETS; a++) {
+        orderbook_set_trade_callback(
+            books[a],
+            snapshot_trade_cb,
+            &shm_buf->snaps[a]
+        );
+    }
+    
 
-    /* ---- create agents ---- */
-    const int NUM_AGENTS = 3;
+    /* --------------------------------------------------
+       global order queue (bounded)
+       -------------------------------------------------- */
+    order_queue global_q;
+    order_queue_init(&global_q, 4096);
+
+    /* --------------------------------------------------
+       dispatcher
+       -------------------------------------------------- */
+    dispatcher disp = {
+        .books      = books,      /* orderbook ** */
+        .queue      = &global_q,  /* single queue */
+        .num_assets = NUM_ASSETS
+    };
+    dispatcher_start(&disp);
+
+    /* --------------------------------------------------
+       agents
+       -------------------------------------------------- */
     agent *agents[NUM_AGENTS];
+    agent_thread threads[NUM_AGENTS];
 
     for (int i = 0; i < NUM_AGENTS; i++) {
         agents[i] = agent_random_create(i);
-        if (!agents[i]) {
-            fprintf(stderr, "failed to create agent %d\n", i);
-            return 1;
-        }
+        threads[i].agent = agents[i];
+        threads[i].queue = &global_q;
+        agent_thread_start(&threads[i]);
     }
 
-    /* ---- shared memory ---- */
-    ShmBuffer *shm_buf = NULL;
-    if (shm_init(&shm_buf) != 0) {
-        fprintf(stderr, "failed to init shared memory\n");
-        return 1;
-    }
+    struct timespec ts = {0, 100 * 1000 * 1000};
 
-    MarketSnapshot snap;
-    orderbook_set_trade_callback(ob, snapshot_trade_cb, &snap);
-    printf("DEBUG: on_trade ptr = %p\n", (void*)ob->on_trade);
-
-    struct timespec ts;
-    ts.tv_sec  = 0;
-    ts.tv_nsec = 100 * 1000 * 1000; /* 100 ms */
-
-    printf("simulation running (Ctrl+C to stop)\n");
-
-    
     /* ==================================================
-       MAIN SIMULATION LOOP
+       FRAME LOOP
        ================================================== */
     while (running) {
-        snap.trade_count = 0;   
-        ensure_book_health(ob);
-        /* ---- agents act FIRST ---- */
-        for (int i = 0; i < NUM_AGENTS; i++) {
-            agents[i]->act(agents[i], ob);
-        }
-
-        /* ---- snapshot AFTER state changes ---- */
-        build_snapshot(ob, &snap);
-        shm_publish(shm_buf, &snap);
-
-        /* ---- debug (optional) ---- */
-        printf("BID %u (%lu) | ASK %u (%lu)\n",
-               snap.best_bid,
-               snap.best_bid_qty,
-               snap.best_ask,
-               snap.best_ask_qty);
+    for (int a = 0; a < NUM_ASSETS; a++) {
+        shm_buf->snaps[a].trade_count = 0;
+        build_snapshot(books[a], &shm_buf->snaps[a]);
+    }
+    
+    shm_publish(shm_buf);
+    
 
         nanosleep(&ts, NULL);
     }
 
-    /* ==================================================
-       cleanup
-       ================================================== */
-    shm_destroy();
-
+    /* --------------------------------------------------
+       shutdown
+       -------------------------------------------------- */
     for (int i = 0; i < NUM_AGENTS; i++) {
+        agent_thread_stop(&threads[i]);
         agent_destroy(agents[i]);
     }
 
-    orderbook_destroy(ob);
+    dispatcher_stop(&disp);
+    order_queue_destroy(&global_q);
+    shm_destroy();
 
-    printf("simulation stopped\n");
+    for (int i = 0; i < NUM_ASSETS; i++)
+        orderbook_destroy(books[i]);
+
     return 0;
 }
 
