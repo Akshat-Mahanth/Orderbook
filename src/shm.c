@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -32,12 +33,18 @@ int shm_init(ShmBuffer **out)
         return -1;
 
     memset(shm_ptr, 0, sizeof(ShmBuffer));
-    *out = shm_ptr;
+
+    if (out)
+        *out = shm_ptr;
+
     return 0;
 }
 
 void shm_publish(ShmBuffer *buf)
 {
+    if (!shm_ptr || !buf)
+        return;
+
     memcpy(shm_ptr, buf, sizeof(ShmBuffer));
 }
 
@@ -45,8 +52,10 @@ void shm_destroy(void)
 {
     if (shm_ptr)
         munmap(shm_ptr, sizeof(ShmBuffer));
+
     if (shm_fd >= 0)
         close(shm_fd);
+
     shm_unlink(SHM_NAME);
 }
 

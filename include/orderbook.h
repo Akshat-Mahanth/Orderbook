@@ -1,26 +1,34 @@
 #ifndef ORDERBOOK_H
 #define ORDERBOOK_H
+#define _POSIX_C_SOURCE 200809L
 
+#include <pthread.h> 
 #include <stdint.h>
 #include "order.h"
 #include "hashmap.h"
 #include "queue.h"
 #include "heap.h"
 #include "order_location.h"
-#include "trade_event.h"   /* ✅ REQUIRED */
+#include "trade_event.h"   
 
-typedef struct orderbook {
-    hashmap* bids;
-    hashmap* asks;
-    heap*    bid_prices;
-    heap*    ask_prices;
-    hashmap* order_index;
+#pragma once
+#include <pthread.h>
+
+typedef struct orderbook orderbook;
+typedef void (*trade_callback)(uint32_t, uint32_t, char, void *);
 
-    /* trade event hook */
+struct orderbook {
+    hashmap *bids;
+    hashmap *asks;
+    heap    *bid_prices;
+    heap    *ask_prices;
+    hashmap *order_index;
+
     trade_callback on_trade;
-    void*          trade_ctx;
-} orderbook;
+    void *trade_ctx;
 
+    pthread_rwlock_t lock;
+};
 /* lifecycle */
 orderbook* orderbook_create(size_t capacity);
 void       orderbook_destroy(orderbook* ob);

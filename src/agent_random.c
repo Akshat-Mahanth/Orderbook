@@ -1,7 +1,8 @@
 #include <stdlib.h>
 #include <time.h>
-#include "config.h"
+#include <string.h>
 
+#include "config.h"
 #include "agent.h"
 #include "order_intent.h"
 #include "order_queue.h"
@@ -11,11 +12,10 @@
    -------------------------------------------------- */
 
 #define MAX_QTY        5
-#define PRICE_CENTER  100
-#define PRICE_JITTER  5
+#define PRICE_JITTER  3   /* tighter → more trades */
 
 /* --------------------------------------------------
-   helper
+   helpers
    -------------------------------------------------- */
 
 static int rand_range(int a, int b)
@@ -29,18 +29,22 @@ static int rand_range(int a, int b)
 
 static void random_agent_act(agent *self, order_queue *q)
 {
-    (void)self;
-
+    /* 🔴 CRITICAL: zero initialize */
     OrderIntent intent;
+    memset(&intent, 0, sizeof(intent));
 
     intent.agent_id = self->id;
     intent.asset_id = rand() % NUM_ASSETS;
     intent.side     = (rand() & 1) ? BUY : SELL;
     intent.type     = LIMIT;
     intent.qty      = rand_range(1, MAX_QTY);
-    intent.price    = PRICE_CENTER + rand_range(-PRICE_JITTER, PRICE_JITTER);
 
-    if (intent.price == 0)
+    /* asset-aware fair price */
+    int base_price = 100 + intent.asset_id * 10;
+    intent.price   = base_price + rand_range(-PRICE_JITTER, PRICE_JITTER);
+
+    /* safety */
+    if (intent.price < 1)
         intent.price = 1;
 
     order_queue_push(q, &intent);

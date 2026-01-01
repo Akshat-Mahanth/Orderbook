@@ -1,28 +1,26 @@
 class CandleSeries:
-    def __init__(self, interval_sec=1):
-        self.interval = interval_sec
+    def __init__(self, max_candles=200):
+        self.candles = []          # list of (o, h, l, c)
         self.current = None
-        self.candles = []  # list of (t, o, h, l, c)
+        self.max = max_candles
 
-    def _bucket(self, ts_ms):
-        return (ts_ms // 1000) // self.interval
-
-    def add_trade(self, ts_ms, price, qty):
-        bucket = self._bucket(ts_ms)
-
+    def on_trade(self, ts_ms, price, qty):
+        # start new candle
         if self.current is None:
-            self.current = [bucket, price, price, price, price]
-            return
-
-        if bucket == self.current[0]:
-            self.current[2] = max(self.current[2], price)  # high
-            self.current[3] = min(self.current[3], price)  # low
-            self.current[4] = price                         # close
+            self.current = [price, price, price, price]
         else:
-            self.candles.append(tuple(self.current))
-            self.current = [bucket, price, price, price, price]
-    def get_ohlc(self):
-            data = list(self.candles)
-            if self.current:
-                data.append(tuple(self.current))
-            return data
+            # update current
+            self.current[1] = max(self.current[1], price)  # high
+            self.current[2] = min(self.current[2], price)  # low
+            self.current[3] = price                         # close
+
+        # close immediately → tick candle
+        self.candles.append(tuple(self.current))
+        if len(self.candles) > self.max:
+            self.candles.pop(0)
+
+        self.current = None
+
+    def all_candles(self):
+        return self.candles
+

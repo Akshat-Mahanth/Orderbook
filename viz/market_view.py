@@ -7,10 +7,10 @@ class MarketView(QtWidgets.QWidget):
     def __init__(self, num_assets=3, view_count=2):
         super().__init__()
 
-        # ---------- state (MUST come first) ----------
+        # ---------- state ----------
         self.num_assets = num_assets
         self.view_count = view_count
-        self.asset_ids = list(range(num_assets))   # <-- THIS WAS MISSING AT RUNTIME
+        self.asset_ids = list(range(num_assets))
 
         # ---------- UI ----------
         self.setWindowTitle("Multi-Asset Market View")
@@ -19,14 +19,10 @@ class MarketView(QtWidgets.QWidget):
         self.grid = QtWidgets.QGridLayout(self)
         self.panels = []
 
-        # ---------- build ----------
         self._build_grid()
 
     # -------------------------------------------------
-    # grid construction
-    # -------------------------------------------------
     def _build_grid(self):
-        # clear existing widgets
         while self.grid.count():
             item = self.grid.takeAt(0)
             widget = item.widget()
@@ -51,15 +47,11 @@ class MarketView(QtWidgets.QWidget):
             self.grid.addWidget(panel, row, col)
 
     # -------------------------------------------------
-    # external reconfiguration
-    # -------------------------------------------------
     def reconfigure(self, asset_ids, view_count):
         self.asset_ids = asset_ids
         self.view_count = view_count
         self._build_grid()
 
-    # -------------------------------------------------
-    # core update (expects per-asset snapshots)
     # -------------------------------------------------
     def update_market(self, snapshots_by_asset):
         for panel in self.panels:
@@ -70,25 +62,50 @@ class MarketView(QtWidgets.QWidget):
             panel.update_l2(snap["bids"], snap["asks"])
             panel.add_trades(snap["trades"])
 
+            if "l3" in snap:
+                panel.update_l3(
+                    snap["l3"]["bids"],
+                    snap["l3"]["asks"]
+                )
+
     # -------------------------------------------------
-    # SHM routing shim (single-asset → multi-asset)
+    # SHM routing: L2 + L3
     # -------------------------------------------------
-    def update_from_shm(self, snaps):
+    def update_from_shm(self, l2_snaps, l3_snaps):
         snapshots = {}
-    
-        for asset_id in range(len(snaps)):
-            s = snaps[asset_id]
-    
-            bids = [(lvl.price, lvl.qty) for lvl in s.bids[:s.bid_levels]]
-            asks = [(lvl.price, lvl.qty) for lvl in s.asks[:s.ask_levels]]
-            trades = [(t.timestamp, t.price, t.qty)
-                      for t in s.trades[:s.trade_count]]
-            
+
+        for asset_id in range(len(l2_snaps)):
+            l2 = l2_snaps[asset_id]
+            l3 = l3_snaps[asset_id]
+
+            bids = [(lvl.price, lvl.qty)
+                    for lvl in l2.bids[:l2.bid_levels]]
+
+            asks = [(lvl.price, lvl.qty)
+                    for lvl in l2.asks[:l2.ask_levels]]
+
+            # ✅ FIXED: use l2, not undefined s
+            trades = []
+            for t in l2.trades[:l2.trade_count]:
+                ts, price, qty = t.timestamp, t.price, t.qty
+                print("TRADE FOR CHART:", ts, price, qty)
+                trades.append((ts, price, qty))
+
             snapshots[asset_id] = {
                 "bids": bids,
                 "asks": asks,
                 "trades": trades,
+                "l3": {
+                    "bids": [
+                        {"order_id": o.order_id, "price": o.price, "qty": o.qty}
+                        for o in l3.bids[:l3.bid_count]
+                    ],
+                    "asks": [
+                        {"order_id": o.order_id, "price": o.price, "qty": o.qty}
+                        for o in l3.asks[:l3.ask_count]
+                    ],
+                }
             }
-    
+
         self.update_market(snapshots)
-        
+

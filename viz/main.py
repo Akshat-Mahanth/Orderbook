@@ -44,11 +44,8 @@ def main():
         try_connect_shm()
         if shm is None:
             return
-        snaps = shm.read_all()
-        for i, snap in enumerate(snaps):
-            print("PY asset", i, "ts", snap.timestamp, "trades", snap.trade_count)
-        view.update_from_shm(snaps)
-
+        l2, l3 = shm.read_all()
+        view.update_from_shm(l2, l3)
 
     timer = QTimer()
     timer.timeout.connect(tick)

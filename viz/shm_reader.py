@@ -5,6 +5,9 @@ from viz.config import NUM_ASSETS
 
 SHM_PATH = "/dev/shm/market_snapshot"
 
+# ----------------------------
+# L2 structures
+# ----------------------------
 
 class TradeEvent(ctypes.Structure):
     _fields_ = [
@@ -21,7 +24,7 @@ class PriceLevel(ctypes.Structure):
     ]
 
 
-L2_DEPTH = 10
+L2_DEPTH   = 10
 MAX_TRADES = 64
 
 
@@ -44,11 +47,41 @@ class MarketSnapshot(ctypes.Structure):
     ]
 
 
-class ShmBuffer(ctypes.Structure):
-    _fields_ = [
-        ("snaps", MarketSnapshot * NUM_ASSETS)
-    ]
+# ----------------------------
+# L3 structures  (🔥 FIX)
+# ----------------------------
 
+L3_MAX_ORDERS = 128
+
+
+class L3Order(ctypes.Structure):
+    _fields_ = [
+        ("order_id", ctypes.c_uint32),
+        ("price", ctypes.c_uint32),
+        ("qty", ctypes.c_uint32),
+        ("side", ctypes.c_uint8),
+        ("_pad", ctypes.c_uint8 * 3),
+    ]
+
+
+class L3Snapshot(ctypes.Structure):
+    _fields_ = [
+        ("bid_count", ctypes.c_uint32),
+        ("ask_count", ctypes.c_uint32),
+        ("bids", L3Order * 64),
+        ("asks", L3Order * 64),
+    ]
+
+
+class ShmBuffer(ctypes.Structure):
+    _fields_ = [
+        ("l2", MarketSnapshot * NUM_ASSETS),
+        ("l3", L3Snapshot * NUM_ASSETS),
+    ]
+
+# ----------------------------
+# Reader
+# ----------------------------
 
 class ShmReader:
     def __init__(self):
@@ -67,5 +100,5 @@ class ShmReader:
     def read_all(self):
         self.map.seek(0)
         self.buf = ShmBuffer.from_buffer_copy(self.map)
-        return self.buf.snaps
+        return self.buf.l2, self.buf.l3
 

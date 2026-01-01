@@ -1,5 +1,6 @@
 CC      := gcc
-CFLAGS  := -std=c11 -Wall -Wextra -Wpedantic -O2
+CFLAGS := -std=c11 -Wall -Wextra -Wpedantic -O2 -pthread \
+          -D_POSIX_C_SOURCE=200809L
 INCLUDES:= -Isrc -Iinclude
 LDFLAGS := -lrt -pthread
 
@@ -14,6 +15,7 @@ SRCS := \
     $(SRC_DIR)/order_queue.c \
     $(SRC_DIR)/orderbook.c \
     $(SRC_DIR)/snapshot.c \
+    $(SRC_DIR)/l3_snapshot.c \
     $(SRC_DIR)/shm.c \
     $(SRC_DIR)/queue.c \
     $(SRC_DIR)/heap.c \

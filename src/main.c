@@ -4,9 +4,11 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <time.h>
+#include <string.h>
 
 #include "orderbook.h"
 #include "snapshot.h"
+#include "l3_snapshot.h"
 #include "shm.h"
 #include "agent.h"
 #include "agent_thread.h"
@@ -23,7 +25,7 @@ static void handle_sigint(int sig)
 }
 
 /* -------------------------------------------------- */
-/* seed liquidity per asset                           */
+/* seed liquidity                                     */
 /* -------------------------------------------------- */
 static void seed_book(orderbook *ob, int asset)
 {
@@ -65,22 +67,26 @@ int main(void)
     }
 
     /* --------------------------------------------------
-       snapshot (asset 0)
-       -------------------------------------------------- */
-    ShmBuffer *shm_buf = NULL;
-    shm_init(&shm_buf);
-    
-    for (int a = 0; a < NUM_ASSETS; a++) {
+       shared memory (MUST be before publish)
+       -------------------------------------------------- */
+    if (shm_init(NULL) != 0) {
+        perror("shm_init");
+        exit(1);
+    }
+
+    ShmBuffer shm_state;
+    memset(&shm_state, 0, sizeof(shm_state));
+
+    /* trade callbacks → L2 snapshots */
+    for (int a = 0; a < NUM_ASSETS; a++)
         orderbook_set_trade_callback(
             books[a],
             snapshot_trade_cb,
-            &shm_buf->snaps[a]
+            &shm_state.l2[a]
         );
-    }
-    
 
     /* --------------------------------------------------
-       global order queue (bounded)
+       global order queue
        -------------------------------------------------- */
     order_queue global_q;
     order_queue_init(&global_q, 4096);
@@ -89,8 +95,8 @@ int main(void)
        dispatcher
        -------------------------------------------------- */
     dispatcher disp = {
-        .books      = books,      /* orderbook ** */
-        .queue      = &global_q,  /* single queue */
+        .books      = books,
+        .queue      = &global_q,
         .num_assets = NUM_ASSETS
     };
     dispatcher_start(&disp);
@@ -110,18 +116,17 @@ int main(void)
 
     struct timespec ts = {0, 100 * 1000 * 1000};
 
-    /* ==================================================
-       FRAME LOOP
-       ================================================== */
+    /* --------------------------------------------------
+       frame loop
+       -------------------------------------------------- */
     while (running) {
-    for (int a = 0; a < NUM_ASSETS; a++) {
-        shm_buf->snaps[a].trade_count = 0;
-        build_snapshot(books[a], &shm_buf->snaps[a]);
-    }
-    
-    shm_publish(shm_buf);
-    
+        for (int a = 0; a < NUM_ASSETS; a++) {
+            shm_state.l2[a].trade_count = 0;
+            build_snapshot(books[a], &shm_state.l2[a]);
+            build_l3_snapshot(books[a], &shm_state.l3[a]);
+        }
 
+        shm_publish(&shm_state);
         nanosleep(&ts, NULL);
     }
 
