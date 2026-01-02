@@ -119,16 +119,23 @@ int main(void)
     /* --------------------------------------------------
        frame loop
        -------------------------------------------------- */
-    while (running) {
-        for (int a = 0; a < NUM_ASSETS; a++) {
-            shm_state.l2[a].trade_count = 0;
-            build_snapshot(books[a], &shm_state.l2[a]);
-            build_l3_snapshot(books[a], &shm_state.l3[a]);
-        }
-
-        shm_publish(&shm_state);
-        nanosleep(&ts, NULL);
-    }
+    while (running) {
+        /* build snapshots (includes trades from callbacks) */
+        for (int a = 0; a < NUM_ASSETS; a++) {
+            build_snapshot(books[a], &shm_state.l2[a]);
+        }
+    
+        /* publish to SHM */
+        shm_publish(&shm_state);
+    
+        /* NOW clear trades for the next frame */
+        for (int a = 0; a < NUM_ASSETS; a++) {
+            shm_state.l2[a].trade_count = 0;
+        }
+    
+        nanosleep(&ts, NULL);
+    }
+    
 
     /* --------------------------------------------------
        shutdown

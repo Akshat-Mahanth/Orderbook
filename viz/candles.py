@@ -1,26 +1,34 @@
 class CandleSeries:
-    def __init__(self, max_candles=200):
-        self.candles = []          # list of (o, h, l, c)
-        self.current = None
+    def __init__(self, interval_ms=1000, max_candles=200):
+        self.interval = interval_ms
         self.max = max_candles
+        self.candles = []      # (t, o, h, l, c)
+        self.current = None    # [t, o, h, l, c]
 
-    def on_trade(self, ts_ms, price, qty):
-        # start new candle
+    def _bucket(self, ts):
+        return (ts // self.interval) * self.interval
+
+    def on_trade(self, ts, price, qty):
+        bucket = self._bucket(ts)
+
         if self.current is None:
-            self.current = [price, price, price, price]
+            self.current = [bucket, price, price, price, price]
+            return
+
+        if bucket == self.current[0]:
+            self.current[2] = max(self.current[2], price)  # high
+            self.current[3] = min(self.current[3], price)  # low
+            self.current[4] = price                         # close
         else:
-            # update current
-            self.current[1] = max(self.current[1], price)  # high
-            self.current[2] = min(self.current[2], price)  # low
-            self.current[3] = price                         # close
+            self.candles.append(tuple(self.current))
+            if len(self.candles) > self.max:
+                self.candles.pop(0)
 
-        # close immediately → tick candle
-        self.candles.append(tuple(self.current))
-        if len(self.candles) > self.max:
-            self.candles.pop(0)
-
-        self.current = None
+            self.current = [bucket, price, price, price, price]
 
     def all_candles(self):
-        return self.candles
+        data = list(self.candles)
+        if self.current:
+            data.append(tuple(self.current))
+        return data
 

@@ -88,7 +88,6 @@ class MarketView(QtWidgets.QWidget):
             trades = []
             for t in l2.trades[:l2.trade_count]:
                 ts, price, qty = t.timestamp, t.price, t.qty
-                print("TRADE FOR CHART:", ts, price, qty)
                 trades.append((ts, price, qty))
 
             snapshots[asset_id] = {
