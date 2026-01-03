@@ -24,9 +24,9 @@ static void handle_sigint(int sig)
     running = 0;
 }
 
-/* -------------------------------------------------- */
-/* seed liquidity                                     */
-/* -------------------------------------------------- */
+/* --------------------------------------------------
+   seed liquidity
+   -------------------------------------------------- */
 static void seed_book(orderbook *ob, int asset)
 {
     uint32_t base = 100 + asset * 10;
@@ -67,7 +67,7 @@ int main(void)
     }
 
     /* --------------------------------------------------
-       shared memory (MUST be before publish)
+       shared memory
        -------------------------------------------------- */
     if (shm_init(NULL) != 0) {
         perror("shm_init");
@@ -78,12 +78,13 @@ int main(void)
     memset(&shm_state, 0, sizeof(shm_state));
 
     /* trade callbacks → L2 snapshots */
-    for (int a = 0; a < NUM_ASSETS; a++)
+    for (int a = 0; a < NUM_ASSETS; a++) {
         orderbook_set_trade_callback(
             books[a],
             snapshot_trade_cb,
             &shm_state.l2[a]
         );
+    }
 
     /* --------------------------------------------------
        global order queue
@@ -116,26 +117,42 @@ int main(void)
 
     struct timespec ts = {0, 100 * 1000 * 1000};
 
-    /* --------------------------------------------------
-       frame loop
-       -------------------------------------------------- */
-    while (running) {
-        /* build snapshots (includes trades from callbacks) */
-        for (int a = 0; a < NUM_ASSETS; a++) {
-            build_snapshot(books[a], &shm_state.l2[a]);
-        }
-    
-        /* publish to SHM */
-        shm_publish(&shm_state);
-    
-        /* NOW clear trades for the next frame */
-        for (int a = 0; a < NUM_ASSETS; a++) {
-            shm_state.l2[a].trade_count = 0;
-        }
-    
-        nanosleep(&ts, NULL);
-    }
-    
+    /* ==================================================
+       FRAME LOOP
+       ================================================== */
+    while (running) {
+
+        for (int a = 0; a < NUM_ASSETS; a++) {
+
+            /* ---------- L2 ---------- */
+            build_snapshot(books[a], &shm_state.l2[a]);
+
+            /* ---------- L3 ---------- */
+            build_l3_snapshot(books[a], &shm_state.l3[a]);
+
+            /* 🔴 CRITICAL DEBUG PRINT 🔴 */
+            if (shm_state.l3[a].bid_count > 0 ||
+                shm_state.l3[a].ask_count > 0)
+            {
+                printf(
+                    "L3 asset %d: bids=%u asks=%u\n",
+                    a,
+                    shm_state.l3[a].bid_count,
+                    shm_state.l3[a].ask_count
+                );
+            }
+        }
+
+        /* publish snapshot */
+        shm_publish(&shm_state);
+
+        /* clear per-frame trades */
+        for (int a = 0; a < NUM_ASSETS; a++) {
+            shm_state.l2[a].trade_count = 0;
+        }
+
+        nanosleep(&ts, NULL);
+    }
 
     /* --------------------------------------------------
        shutdown

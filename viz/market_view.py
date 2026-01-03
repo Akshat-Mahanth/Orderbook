@@ -71,40 +71,44 @@ class MarketView(QtWidgets.QWidget):
     # -------------------------------------------------
     # SHM routing: L2 + L3
     # -------------------------------------------------
-    def update_from_shm(self, l2_snaps, l3_snaps):
-        snapshots = {}
-
-        for asset_id in range(len(l2_snaps)):
-            l2 = l2_snaps[asset_id]
-            l3 = l3_snaps[asset_id]
-
-            bids = [(lvl.price, lvl.qty)
-                    for lvl in l2.bids[:l2.bid_levels]]
-
-            asks = [(lvl.price, lvl.qty)
-                    for lvl in l2.asks[:l2.ask_levels]]
-
-            # ✅ FIXED: use l2, not undefined s
-            trades = []
-            for t in l2.trades[:l2.trade_count]:
-                ts, price, qty = t.timestamp, t.price, t.qty
-                trades.append((ts, price, qty))
-
-            snapshots[asset_id] = {
-                "bids": bids,
-                "asks": asks,
-                "trades": trades,
-                "l3": {
-                    "bids": [
-                        {"order_id": o.order_id, "price": o.price, "qty": o.qty}
-                        for o in l3.bids[:l3.bid_count]
-                    ],
-                    "asks": [
-                        {"order_id": o.order_id, "price": o.price, "qty": o.qty}
-                        for o in l3.asks[:l3.ask_count]
-                    ],
-                }
-            }
-
-        self.update_market(snapshots)
-
+    def update_from_shm(self, l2_snaps, l3_snaps):
+        snapshots = {}
+    
+        for asset_id in range(len(l2_snaps)):
+            l2 = l2_snaps[asset_id]
+            l3 = l3_snaps[asset_id]
+    
+            bids = [(lvl.price, lvl.qty) for lvl in l2.bids[:l2.bid_levels]]
+            asks = [(lvl.price, lvl.qty) for lvl in l2.asks[:l2.ask_levels]]
+    
+            trades = [
+                (t.timestamp, t.price, t.qty)
+                for t in l2.trades[:l2.trade_count]
+            ]
+    
+            snapshots[asset_id] = {
+                "bids": bids,
+                "asks": asks,
+                "trades": trades,
+                "l3": {
+                    "bids": [
+                        {
+                            "order_id": o.order_id,
+                            "price": o.price,
+                            "qty": o.qty,
+                        }
+                        for o in l3.bids[:l3.bid_count]
+                    ],
+                    "asks": [
+                        {
+                            "order_id": o.order_id,
+                            "price": o.price,
+                            "qty": o.qty,
+                        }
+                        for o in l3.asks[:l3.ask_count]
+                    ],
+                }
+            }
+    
+        self.update_market(snapshots)
+    
